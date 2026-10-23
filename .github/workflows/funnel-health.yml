@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: GET /health (200 and "ok": true, 3 tries over ~1 minute)
+      - name: GET /health (HTTP 200 and ok=true, 3 tries over ~1 minute)
         env:
           REPORT_KEY: ${{ secrets.REPORT_KEY }}
         run: |
