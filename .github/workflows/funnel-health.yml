@@ -1,0 +1,49 @@
+# Funnel watchdog (founder-approved 2026-10-23): checks the vektor-ig-dm worker's /health every 30 minutes so the
+# Instagram comment -> DM funnel is watched while the laptop sleeps. A failed run is the alarm: GitHub emails the
+# account that last edited the cron line below.
+#
+# Secret: REPORT_KEY = the worker's REPORT_KEY (VEKTOR_REPORT_KEY in vektor-producer/.env). Never printed.
+# GitHub pauses scheduled workflows in a public repo after 60 days without activity; the keepalive job re-enables
+# this workflow monthly so that never happens silently.
+name: funnel-health
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+    - cron: "0 6 1 * *" # monthly keepalive
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  health:
+    if: github.event.schedule != '0 6 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: GET /health (200 and "ok": true, 3 tries over ~1 minute)
+        env:
+          REPORT_KEY: ${{ secrets.REPORT_KEY }}
+        run: |
+          test -n "$REPORT_KEY" || { echo "::error::REPORT_KEY secret is not set"; exit 1; }
+          for i in 1 2 3; do
+            code=$(curl -sS -o body.json -w '%{http_code}' --max-time 20 \
+              "https://vektor-ig-dm.vektor-fm.workers.dev/health?k=${REPORT_KEY}" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"ok": *true' body.json; then
+              echo "funnel healthy (try $i)"; cat body.json; exit 0
+            fi
+            echo "try $i: HTTP $code"; cat body.json 2>/dev/null || true
+            sleep 20
+          done
+          echo "::error::Funnel /health failed 3 times. Check the worker: vektor-ig-dm.vektor-fm.workers.dev"
+          exit 1
+
+  keepalive:
+    if: github.event.schedule == '0 6 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable this workflow (resets GitHub's 60-day inactivity pause)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/funnel-health.yml/enable"
